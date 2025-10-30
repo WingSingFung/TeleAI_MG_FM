@@ -1,0 +1,10 @@
+vector_quantize_pytorch
+descript-audio-codec
+rotary_embedding_torch
+peft
+openai-whisper
+lion_pytorch
+torchcfm
+whisper_normalizer
+jiwer
+kaldiio

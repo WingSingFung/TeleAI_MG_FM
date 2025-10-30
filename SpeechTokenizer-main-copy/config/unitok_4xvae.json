@@ -1,0 +1,70 @@
+{
+    "vae_cfg": "/gemini/platform/public/aigc/mah_1/mah/generalvae/exps/small_4x_conv1d/config.json",
+    "vae_ckpt": "/gemini/platform/public/aigc/mah_1/mah/generalvae/exps/small_4x_conv1d/checkpoints/last.ckpt",
+    "vocoder_cfg": "/gemini/platform/public/aigc/mah_1/mah/vocoder/SpeechTokenizer-main/exps/vocoder_50hz/config.json",
+    "vocoder_ckpt": "/gemini/platform/public/aigc/mah_1/mah/vocoder/SpeechTokenizer-main/exps/vocoder_50hz/logs/version_1/checkpoints/last.ckpt",
+
+
+    "encoder_cfg":{
+        "dim": 768,
+        "mel_dim": 128,
+        "depth": 12,
+        "heads": 12,
+        "dim_head": 64,
+        "model_type": "50hz"
+    },
+
+    "vq_type": "sim_vq",
+    "quantizer_cfg": {
+        "dim": 768,
+        "codebook_size": 4096,
+        "channel_first": true,
+        "frozen_codebook_dim": 768
+    },
+
+    "decoder_cfg":{
+        "dim": 768,
+        "latent_dim": 32,
+        "cond_dim": 768,
+        "depth": 12,
+        "heads": 12,
+        "dim_head": 64,
+        "model_type": "50hz"
+    },
+
+    "stft_config": {
+        "sampling_rate": 32000,
+        "filter_length": 2048,
+        "hop_length": 640,
+        "win_length": 2048,
+        "n_mel_channels": 128,
+        "mel_fmin": 0,
+        "mel_fmax": 16000
+    },
+
+
+    "quantize_start_step": 5000,
+
+    "cfg_drop_rate": 0.1,
+    "cfg_guidance_scale": 1.5,
+
+    "train_files": "/gemini/platform/public/aigc/mah_1/mah/SpeechTokenizer-main/data_processing/audioset_train.txt",
+    "valid_files": "/gemini/platform/public/aigc/mah_1/mah/SpeechTokenizer-main/data_processing/audioset_eval_sub.txt",
+    "results_folder": "exps/unitok_50hz_simvq_cfg",
+    "sample_rate": 32000,
+    "batch_size": 64,
+    "epochs":100,
+    "learning_rate": 1e-4,
+    "initial_learning_rate":1e-4,
+    "betas":[0.9, 0.95],
+    "seed": 1234,
+    "segment_size": 320000,
+    "wd": 1e-6,
+    "num_workers": 8,
+    "num_ckpt_keep": 3,
+    "showpiece_num": 8,
+    "accelerator": "gpu",
+    "devices": [0,1,2,3,4,5],
+    "strategy": "ddp_find_unused_parameters_true",
+    "precision": "bf16-mixed"
+}

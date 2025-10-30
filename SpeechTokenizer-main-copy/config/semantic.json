@@ -1,0 +1,43 @@
+{
+    "training_stage": 0,
+    "lm_name": "/gemini/platform/public/aigc/mah_1/mah/unitok/SpeechTokenizer-main/checkpoints/tinyllama-chat",
+
+    "vq_type": "sim_vq",
+    "codebook_size": 16384,
+    "semantic_quantizer_cfg": {
+        "dim": 1024,
+        "codebook_size": 16384,
+        "channel_first": false,
+        "rotation_trick": false,
+        "frozen_codebook_dim": 1024,
+        "input_to_quantize_commit_loss_weight": 0.25,
+        "commitment_weight": 1.0
+    },
+    
+    "loss_scale_quantizer" : 1.0,
+    "quantize_warmup_step" : 20000,
+
+    "train_files": "/gemini/platform/public/aigc/mh-data/librispeech/LibriSpeech/librispeech_data.json",
+    "valid_files": "/gemini/platform/public/aigc/mh-data/librispeech/LibriSpeech/librispeech_data.json",
+    "results_folder": "exps_semantic/12_5hz_asr_1022_tinyllama_whisper",
+    "padding_mode": "zero",
+    "chunk_mode": "constant", 
+    "sample_rate": 16000,
+    "batch_size": 16,
+    "epochs":100,
+    "learning_rate": 1e-4,
+    "initial_learning_rate": 0,
+    "num_warmup_steps": 5000,
+    "betas":[0.9, 0.95],
+    "seed": 1234,
+    "segment_size": 480000,
+    "wd": 1e-2,
+    "eps": 1e-6,
+    "num_workers": 8,
+    "num_ckpt_keep": 3,
+    "showpiece_num": 8,
+    "accelerator": "gpu",
+    "devices": [0,1,2,3,4,5],
+    "strategy": "ddp",
+    "precision": "bf16-mixed"
+}
