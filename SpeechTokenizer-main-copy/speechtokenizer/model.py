@@ -431,12 +431,24 @@ class DiTFM(nn.Module):
         # 加载外部codec模型（使用audiocraft的加载方式）
         from pathlib import Path
         import sys
-        sys.path.append(str(Path(__file__).parent.parent.parent.parent / 'mg'))
-        from audiocraft.models.loaders import load_compression_model
-        
+        sys.path.append('/gemini/platform/public/aigc/fys/separation/mg')
+        # from audiocraft.models.loaders import load_compression_model
+        from audiocraft.solvers.compression import CompressionSolver
         codec_path = config.get('codec_model_path')
         device = config.get('device', 'cpu')
-        self.codec_model = load_compression_model(codec_path, device=device)
+        sample_rate = config.get('sample_rate')
+        self.num_codebooks = config.get('n_q')
+        # self.codec_model = load_compression_model(codec_path, device=device)
+        self.codec_model = CompressionSolver.model_from_checkpoint(
+            codec_path, device=device)
+        self.codec_model.set_num_codebooks(self.num_codebooks)
+        assert self.codec_model.sample_rate == sample_rate, (
+            f"Codec model sample rate is {self.codec_model.sample_rate} but "
+            f"Solver sample rate is {sample_rate}."
+            )
+        assert self.codec_model.sample_rate == sample_rate, \
+            f"Sample rate of solver {sample_rate} and codec {self.codec_model.sample_rate} " \
+            "don't match."
         
         # 冻结codec模型参数
         for p in self.codec_model.parameters():
@@ -446,8 +458,15 @@ class DiTFM(nn.Module):
         # 获取codec的输出维度
         # encodec的codes shape: (B, K, T), K是quantizer数量
         # 我们需要将codes转换为embedding
-        self.codec_dim = self.codec_model.quantizer.dimension
-        self.num_codebooks = self.codec_model.quantizer.n_q
+        # self.codec_dim = self.codec_model.model.quantizer.dimension
+        # self.codec_dim = 256
+        # 创建一个dummy codes来推断维度
+        dummy_codes = torch.zeros(1, self.num_codebooks, 1, dtype=torch.long, device=device)
+        with torch.no_grad():
+            latent = self.codec_model.decode_latent(dummy_codes)  # (B, D, T)
+            self.codec_dim = latent.shape[1]
+            print(f"Codec dimension: {self.codec_dim}")
+        
         
         # 将codec的量化输出映射到decoder的条件维度
         self.codec_adapter = nn.Sequential(
@@ -496,7 +515,8 @@ class DiTFM(nn.Module):
             codes, scale = self.codec_model.encode(wav)
             # codes shape: (B, K, T), K是quantizer数量
             # 使用codec的dequantize获取embedding
-            e = self.codec_model.quantizer.decode(codes)  # (B, D, T)
+            # e = self.codec_model.quantizer.decode(codes)  # (B, D, T)
+            e = self.codec_model.decode_latent(codes)
             e = e.transpose(1, 2)  # (B, T, D)
         
         # 映射到decoder的条件空间
@@ -535,7 +555,8 @@ class DiTFM(nn.Module):
         '''
         with torch.no_grad():
             codes, scale = self.codec_model.encode(wav)
-            e = self.codec_model.quantizer.decode(codes)  # (B, D, T)
+            # e = self.codec_model.quantizer.decode(codes)  # (B, D, T)
+            e = self.codec_model.decode_latent(codes)
             e = e.transpose(1, 2)  # (B, T, D)
         
         # 映射到decoder的条件空间
@@ -557,7 +578,7 @@ class DiTFM(nn.Module):
         Returns
         -------
         traj : torch.tensor
-            Reconstructed latent. Shape: (batch, latent_dim, T)
+            Reconstructed latent. Shape: (batch, latent_dim, T_vae)
         '''
         def cfg_decoder(x, t, cond, decoder, guidance_scale):
             # 有条件预测
@@ -573,7 +594,10 @@ class DiTFM(nn.Module):
             # CFG 组合
             return f_uc + guidance_scale * (f_cond - f_uc)
         
-        noise = torch.randn(quantized.shape[0], self.decoder.latent_dim, int(25*audio_dur)).type_as(quantized)
+        # VAE latent 的 frame_rate 是 25 Hz (mel 的 50 Hz 下采样 2 倍)
+        # 根据音频时长计算 VAE latent 的序列长度
+        vae_latent_length = int(25 * audio_dur)
+        noise = torch.randn(quantized.shape[0], self.decoder.latent_dim, vae_latent_length).type_as(quantized)
         traj = torchdiffeq.odeint(
             lambda t, x: cfg_decoder(x, t, quantized, self.decoder, self.cfg_guidance_scale),
             y0=noise,

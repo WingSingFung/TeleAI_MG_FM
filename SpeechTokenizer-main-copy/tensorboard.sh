@@ -1,0 +1,1 @@
+tensorboard --logdir /gemini/platform/public/aigc/fys/separation/TeleAI_MG_FM/SpeechTokenizer-main-copy/exps_ditfm/encodec_32khz_1030

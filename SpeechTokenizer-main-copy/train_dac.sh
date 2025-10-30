@@ -1,1 +1,2 @@
-python ./train_lightning.py --config '/gemini/platform/public/aigc/fys/separation/TeleAI_MG_FM/SpeechTokenizer-main-copy/config/unitok_semantic.json'
+# python ./train_lightning.py --config '/gemini/platform/public/aigc/fys/separation/TeleAI_MG_FM/SpeechTokenizer-main-copy/config/unitok_semantic.json'
+python ./train_lightning.py --config '/gemini/platform/public/aigc/fys/separation/TeleAI_MG_FM/SpeechTokenizer-main-copy/config/ditfm.json'

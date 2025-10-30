@@ -1,1 +1,14 @@
-lightning
+vector_quantize_pytorch
+descript-audio-codec
+rotary_embedding_torch
+peft
+openai-whisper
+lion_pytorch
+torchcfm
+whisper_normalizer
+jiwer
+kaldiio
+xformers==0.0.28.post3
+flashy
+num2words
+spacy

@@ -9,7 +9,7 @@ from functools import partial
 import argparse
 import sys
 import torch
-from speechtokenizer import UniTok, SemanticBranch, LMHead
+from speechtokenizer import UniTok, SemanticBranch, LMHead, DiTFM
 from speechtokenizer.utils import AttrDict, load_config
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
@@ -241,7 +241,6 @@ def main():
         )
         # ctc_head = None
     elif cfg.get('training_stage', 1) == 2:
-        codec = load_codec(cfg) # 使用audiocraft的load_compression_model加载encodec模型
         generator = DiTFM(cfg)
         vocoder, vae = load_vae_vocoder(cfg)
         lm_head = None

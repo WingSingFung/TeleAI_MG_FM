@@ -456,11 +456,13 @@ class DiTDecoder(nn.Module):
             nn.Conv1d(dim, dim, kernel_size=3, stride=adapter_stride, padding=1),
             Rearrange('b d n -> b n d')
         )
+        # cond_adapter 需要对 cond 进行下采样以匹配 VAE latent 的分辨率
+        # 对于 VAE 模式: codec embedding (50 Hz) -> 下采样 2 倍 -> VAE latent space (25 Hz)
         self.cond_adapter = nn.Sequential(
             Rearrange('b n d -> b d n'),
             nn.Conv1d(cond_dim, dim, kernel_size=3, padding=1),
             Swish(),
-            nn.Conv1d(dim, dim, kernel_size=3, stride=1, padding=1),
+            nn.Conv1d(dim, dim, kernel_size=3, stride=2, padding=1),  # 固定 stride=2 下采样
             Rearrange('b d n -> b n d')
         )
         self.final_layer = FinalLayer(dim, latent_dim, final_dropout)
@@ -475,8 +477,13 @@ class DiTDecoder(nn.Module):
         if t.dim() == 0:
             t = t.repeat(B)
         t_emb = self.t_embedder(t)
+        # print(f"x_t shape: {x_t.shape}")
+        # print(f"cond shape: {cond.shape}")
         x_t = self.input_adapter(x_t)
+        # print(f"x_t shape after input_adapter: {x_t.shape}")
+        # print(f"cond shape after cond_adapter: {self.cond_adapter(cond).shape}")
         x_t += self.cond_adapter(cond)
+        
 
         for block in self.layers:
             x_t = block(x_t, t=t_emb, rope=self.rope)

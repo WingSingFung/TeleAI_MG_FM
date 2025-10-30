@@ -221,11 +221,44 @@ class UniTokWrapper(pl.LightningModule):
         return loss_lm + loss_q * self.loss_scale_quantizer
     
         
+    def training_step_ditfm(self, batch, batch_idx):
+        """DiTFM专用的训练步骤"""
+        x = batch['waveform']
+        
+        # DiTFM: 直接使用wav作为输入
+        x_1 = self.sample_vae_latent(self.get_mel_from_wav(x.squeeze(1))[0][...,:-1])
+        noise = torch.randn_like(x_1)
+        t, x_t, u_t = self.fm.sample_location_and_conditional_flow(x0=noise, x1=x_1)
+        
+        # DiTFM forward: wav -> codes -> loss_fm
+        loss_fm, codes = self.generator(x, x_t, u_t, t)
+        loss_q = torch.tensor(0.0, device=x.device)  # DiTFM没有量化损失，因为使用外部codec
+        
+        # 统计codebook使用情况 - codes shape: (B, K, T)
+        indices = codes[:, 0, :]  # 取第一个codebook的codes用于统计
+        
+        if indices is not None:
+            for ind in indices.unique():
+                self.codebook_count[ind] = 1
+        
+        train_code_util = torch.tensor(sum(self.codebook_count) / len(self.codebook_count))
+
+        self.log_dict({
+            "train/codebook_util": train_code_util.item(),
+            "train/flowmatching_loss": loss_fm.item(),
+            "train/quantizer_loss": loss_q.item(),
+            "train/current_lr": self.optimizers().param_groups[0]['lr']
+        }, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=x.shape[0], sync_dist=True)
+        
+        return loss_fm
+        
     def training_step(self, batch, batch_idx):
         if self.training_stage == 0:
             return self.training_step_semantic(batch, batch_idx)
         elif self.training_stage == 1:
             return self.training_step_codec(batch, batch_idx)
+        elif self.training_stage == 2:
+            return self.training_step_ditfm(batch, batch_idx)
         
     
     def validation_step_semantic(self, batch, batch_idx):
@@ -270,13 +303,13 @@ class UniTokWrapper(pl.LightningModule):
         }, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=x.shape[0], sync_dist=True)
 
     def on_train_epoch_start(self):
-        # 判断是DiTFM还是UniTok，获取codebook_size
-        is_ditfm = hasattr(self.generator, 'codec_model')
-        if is_ditfm:
-            # DiTFM: 从codec_model的quantizer获取codebook_size
-            codebook_size = self.generator.codec_model.quantizer.bins
+        # 判断模型类型，获取codebook_size
+        if self.training_stage == 2 or hasattr(self.generator, 'codec_model'):
+            # DiTFM (training_stage=2) 或带有codec_model的模型
+            # 注意：这里需要的是每个codebook的大小(cardinality)，不是codebook数量(num_codebooks)
+            codebook_size = self.generator.codec_model.cardinality
         else:
-            # UniTok: 从config获取
+            # UniTok 或 SemanticBranch: 从config获取
             codebook_size = self.cfg.get('codebook_size')
         self.codebook_count = [0] * codebook_size
 
@@ -317,6 +350,7 @@ class UniTokWrapper(pl.LightningModule):
         # 对于DiTFM，code是(B, K, T)的形状，我们取第一个codebook
         if is_ditfm:
             code_to_save = code[:, 0, :]  # (B, T)
+            # code_to_save = code
         else:
             code_to_save = code
         
@@ -356,6 +390,58 @@ class UniTokWrapper(pl.LightningModule):
             "val/loss": mel_error.item(),
         }, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=x.shape[0], sync_dist=True)
     
+
+    def validation_step_ditfm(self, batch, batch_idx):
+        """DiTFM专用的验证步骤"""
+        x = batch['waveform']
+
+        # DiTFM: 直接使用wav作为输入
+        quantized, code = self.generator.encode(x)
+        vae_latent = self.generator.decode(quantized)
+        
+        # 用于对比的mel
+        x_mel = self.get_mel_from_wav(x.squeeze(1))[0][...,:-1]
+        x_mel_hat, x_hat = self.reconstruct_wav_from_latent(vae_latent)
+
+        # Calculate validation metrics
+        mel_error = torch.nn.functional.l1_loss(x_mel, x_mel_hat)
+
+        # DiTFM的code是(B, K, T)的形状，我们取第一个codebook用于统计
+        code_to_save = code[:, 0, :]  # (B, T)
+        
+        self.all_codes_epoch.append(code_to_save.detach().cpu())
+
+        # Log audio samples for the first few batches
+        if batch_idx < self.showpiece_num:
+            # Log ground truth
+            self.logger.experiment.add_audio(
+                f'groundtruth/x_{batch_idx}', 
+                x[0].float().cpu().detach(), 
+                global_step=self.global_step, 
+                sample_rate=self.sample_rate
+            )
+            self.logger.experiment.add_figure(
+                f'groundtruth/x_spec_{batch_idx}', 
+                plot_spectrogram(x_mel[0].float().cpu().numpy()), 
+                global_step=self.global_step
+            )
+            
+            # Log generated audio
+            self.logger.experiment.add_audio(
+                f'generate/x_hat_{batch_idx}', 
+                x_hat[0].float().cpu().detach(), 
+                global_step=self.global_step, 
+                sample_rate=self.sample_rate
+            )
+            self.logger.experiment.add_figure(
+                f'generate/x_hat_spec_{batch_idx}', 
+                plot_spectrogram(x_mel_hat[0].float().cpu().numpy()), 
+                global_step=self.global_step
+            )
+        
+        self.log_dict({
+            "val/loss": mel_error.item(),
+        }, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=x.shape[0], sync_dist=True)
 
     def on_validation_epoch_start(self):
         # 清空收集容器
@@ -399,11 +485,12 @@ class UniTokWrapper(pl.LightningModule):
         # 统计频率
         all_codes = all_codes.cpu().numpy()
         
-        # 判断是DiTFM还是UniTok，获取codebook_size
-        is_ditfm = hasattr(self.generator, 'codec_model')
-        if is_ditfm:
-            codebook_size = self.generator.codec_model.quantizer.bins
+        # 判断模型类型，获取codebook_size
+        if self.training_stage == 2 or hasattr(self.generator, 'codec_model'):
+            # DiTFM (training_stage=2) 或带有codec_model的模型
+            codebook_size = self.generator.codec_model.num_codebooks
         else:
+            # UniTok 或 SemanticBranch: 从config获取
             codebook_size = self.cfg.get('codebook_size')
         
         freq = np.bincount(all_codes, minlength=codebook_size)
@@ -439,6 +526,8 @@ class UniTokWrapper(pl.LightningModule):
             return self.validation_step_semantic(batch, batch_idx)
         elif self.training_stage == 1:
             return self.validation_step_codec(batch, batch_idx)
+        elif self.training_stage == 2:
+            return self.validation_step_ditfm(batch, batch_idx)
 
 
 
