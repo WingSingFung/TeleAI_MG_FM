@@ -60,7 +60,6 @@
     },
 
     "codec_model_path": "//pretrained//gemini/platform/public/aigc/fys/separation/ckpt/audiocraft_root/facebook/encodec_32khz",
-    "sample_rate": 32000,
     "channels": 1,
     "n_q": 4,
     "device": "cuda",
@@ -79,9 +78,9 @@
 
     "cfg_drop_rate": 0,
     "cfg_guidance_scale": 1,
-    "train_files": "/gemini/platform/public/aigc/fys/separation/TeleAI_MG_FM/SpeechTokenizer-main-copy/data_processing/libritts_raw_data.json",
-    "valid_files": "/gemini/platform/public/aigc/fys/separation/TeleAI_MG_FM/SpeechTokenizer-main-copy/data_processing/libritts_raw_data.json",
-    "results_folder": "exps_ditfm/encodec_32khz_1030",
+    "train_files": "/gemini/platform/public/aigc/fys/datasets/music/music_aes/filter/music_filter_data_train.json",
+    "valid_files": "/gemini/platform/public/aigc/fys/datasets/music/music_aes/filter/music_filter_data_test.json",
+    "results_folder": "exps_ditfm/music_encodec_32khz_1031",
     "padding_mode": "repeat",
     "chunk_mode": "random", 
     "sample_rate": 32000,

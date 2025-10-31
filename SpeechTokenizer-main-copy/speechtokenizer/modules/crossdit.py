@@ -449,11 +449,19 @@ class DiTDecoder(nn.Module):
         self.rope = RoPE(head_dim=dim_head)
         self.t_embedder = TimestepEmbedder(dim, scale=100.)
 
-        adapter_stride = 2 if model_type == 'mel' else 1
+        if model_type == '50hz': # 25hz seq processing
+            adapter_stride_1 = 1
+            adapter_stride_2 = 2
+        elif model_type == '25hz': # 25hz seq processing
+            adapter_stride_1 = 1
+            adapter_stride_2 = 1
+        elif model_type == '12.5hz': # 12.5hz seq processing
+            adapter_stride_1 = 2
+            adapter_stride_2 = 1
         self.input_adapter = nn.Sequential(
             nn.Conv1d(latent_dim, dim, kernel_size=3, padding=1),
             Swish(),
-            nn.Conv1d(dim, dim, kernel_size=3, stride=adapter_stride, padding=1),
+            nn.Conv1d(dim, dim, kernel_size=3, stride=adapter_stride_1, padding=1),
             Rearrange('b d n -> b n d')
         )
         # cond_adapter 需要对 cond 进行下采样以匹配 VAE latent 的分辨率
@@ -462,7 +470,7 @@ class DiTDecoder(nn.Module):
             Rearrange('b n d -> b d n'),
             nn.Conv1d(cond_dim, dim, kernel_size=3, padding=1),
             Swish(),
-            nn.Conv1d(dim, dim, kernel_size=3, stride=2, padding=1),  # 固定 stride=2 下采样
+            nn.Conv1d(dim, dim, kernel_size=3, stride=adapter_stride_2, padding=1),
             Rearrange('b d n -> b n d')
         )
         self.final_layer = FinalLayer(dim, latent_dim, final_dropout)
@@ -484,7 +492,6 @@ class DiTDecoder(nn.Module):
         # print(f"cond shape after cond_adapter: {self.cond_adapter(cond).shape}")
         x_t += self.cond_adapter(cond)
         
-
         for block in self.layers:
             x_t = block(x_t, t=t_emb, rope=self.rope)
         

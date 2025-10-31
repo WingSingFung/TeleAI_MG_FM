@@ -175,7 +175,7 @@ def create_data_loaders(cfg: Dict[str, Any]):
             chunk_mode=chunk_mode
         )
     drop_last = cfg.get("drop_last", True)
-    num_workers = cfg.get("num_workers", 72)
+    num_workers = cfg.get("num_workers", 24)
     train_loader = get_dataloader(
         train_ds, 
         tokenizer_name=cfg.get('lm_name'),

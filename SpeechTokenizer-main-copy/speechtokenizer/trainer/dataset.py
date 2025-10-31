@@ -29,7 +29,8 @@ class audioDataset(Dataset):
 
         if valid:
             # 如果存在 validation，则取 dev
-            self.metadata = [item for item in data if "dev-clean" in item["split"]]
+            # self.metadata = [item for item in data if "dev-clean" in item["split"]]
+            self.metadata = [item for item in data if "test" in item["split"]]
         else:
             # 否则取 train
             self.metadata = [item for item in data if "train" in item["split"]]
@@ -46,66 +47,193 @@ class audioDataset(Dataset):
         try:
             item = self.metadata[idx]
             file_path = item['wav_path']
-            waveform, sr = torchaudio.load(file_path)
-            if waveform.shape[0] > 1:
-                # Convert to mono by averaging channels
-                waveform = waveform.mean(dim=0, keepdim=True)
-
-            # Check for silent/empty audio
-            if waveform.numel() == 0:
-                raise RuntimeError("Loaded audio is empty.")
-
-            if sr != self.sampling_rate:
-                waveform = torchaudio.functional.resample(waveform, sr, self.sampling_rate)
-            if self.padding_mode == 'zero':
-                valid_len = min(waveform.shape[1] / self.sampling_rate, self.segment_size / self.sampling_rate)
-            else:
-                valid_len = self.segment_size / self.sampling_rate
-            waveform = self.pad_waveform(waveform, target_length = self.segment_size)
-
-
-            if waveform.abs().max() < 1e-3:
-                raise RuntimeError("Loaded audio is silent.")
-            waveform *= 0.5 / waveform.abs().max()
-
-            caption = item['text'].strip().lower()
-
             
+            # 1. 首先获取音频元信息（不加载完整音频）
+            try:
+                audio_info = torchaudio.info(file_path)
+                sr = audio_info.sample_rate
+                n_frames = audio_info.num_frames
+                n_channels = audio_info.num_channels
+            except Exception as e:
+                print(f"Error reading audio info from {file_path}: {e}")
+                raise RuntimeError(f"Failed to read audio info: {e}")
+            
+            # 检查音频是否为空
+            if n_frames == 0:
+                raise RuntimeError("Audio file is empty.")
+            
+            # 尝试选择非静音片段，最多重试10次
+            max_retries = 10
+            waveform = None
+            successfully_loaded = False
+            
+            for retry in range(max_retries):
+                try:
+                    # 2. 计算需要加载的片段范围（在原始采样率下）
+                    target_frames_in_sr = int(self.segment_size * sr / self.sampling_rate)
+                    
+                    if n_frames > target_frames_in_sr:
+                        # 音频长度足够，根据重试次数选择不同的起始位置策略
+                        if retry == 0:
+                            # 第一次：根据chunk_mode选择
+                            if self.chunk_mode == 'random' and not self.valid:
+                                start_frame = random.randint(0, n_frames - target_frames_in_sr)
+                            else:
+                                start_frame = 0
+                        elif retry == 1:
+                            # 第二次：从音频中间选择
+                            start_frame = (n_frames - target_frames_in_sr) // 2
+                        elif retry == 2:
+                            # 第三次：从前半部分的中间选择 (1/4位置)
+                            start_frame = (n_frames - target_frames_in_sr) // 4
+                        elif retry == 3:
+                            # 第四次：从后半部分的中间选择 (3/4位置)
+                            start_frame = 3 * (n_frames - target_frames_in_sr) // 4
+                        else:
+                            # 后续重试：在关键点附近随机选择
+                            key_points = [
+                                0,
+                                (n_frames - target_frames_in_sr) // 4,
+                                (n_frames - target_frames_in_sr) // 2,
+                                3 * (n_frames - target_frames_in_sr) // 4,
+                                n_frames - target_frames_in_sr
+                            ]
+                            base_point = key_points[retry % len(key_points)]
+                            # 在关键点附近随机偏移
+                            offset_range = max(1, (n_frames - target_frames_in_sr) // 8)
+                            offset = random.randint(-offset_range, offset_range)
+                            start_frame = max(0, min(n_frames - target_frames_in_sr, base_point + offset))
+                        
+                        # 加载指定片段
+                        waveform, _ = torchaudio.load(file_path, frame_offset=start_frame, num_frames=target_frames_in_sr)
+                    else:
+                        # 音频长度不足，加载全部音频
+                        waveform, _ = torchaudio.load(file_path)
+                    
+                    # 检查加载的音频是否为空
+                    if waveform.numel() == 0:
+                        raise RuntimeError("Loaded audio segment is empty.")
+                    
+                    # 3. 先检查是否为静音（在进行其他处理之前）
+                    # 注意：这里检查的是多通道或原始采样率的音频
+                    if waveform.abs().max() >= 1e-3:
+                        # 非静音，跳出重试循环
+                        successfully_loaded = True
+                        break
+                    
+                    # 静音处理
+                    if retry < max_retries - 1:
+                        if self.chunk_mode != 'random':
+                            print(f"Warning: Loaded audio segment is silent. Retry {retry + 1} of {max_retries} for {file_path}.")
+                    
+                except Exception as e:
+                    # 加载过程中出错，记录并继续重试
+                    print(f"Error loading audio chunk (retry {retry + 1}/{max_retries}) from {file_path}: {e}")
+                    if retry == max_retries - 1:
+                        # 最后一次重试失败，使用全0 tensor
+                        print(f"Failed to load any valid chunk from {file_path} after {max_retries} retries. Using zero tensor.")
+                        waveform = None
+                        break
+            
+            # 如果所有重试都失败或都是静音，使用全0 tensor
+            if waveform is None or not successfully_loaded:
+                if waveform is not None and waveform.abs().max() < 1e-3:
+                    print(f"Warning: All loaded segments are silent for {file_path}. Using zero tensor.")
+                waveform = torch.zeros((1, self.segment_size), dtype=torch.float32)
+                valid_len = self.segment_size / self.sampling_rate
+                
+                return {
+                    "waveform": waveform,
+                    'file_path': file_path,
+                    "valid_len": valid_len,
+                }
+            
+            # 4. 对加载的片段进行后处理：mono转换
+            try:
+                if waveform.shape[0] > 1:
+                    # Convert to mono by averaging channels
+                    waveform = waveform.mean(dim=0, keepdim=True)
+            except Exception as e:
+                print(f"Error converting to mono for {file_path}: {e}. Using zero tensor.")
+                waveform = torch.zeros((1, self.segment_size), dtype=torch.float32)
+                valid_len = self.segment_size / self.sampling_rate
+                return {
+                    "waveform": waveform,
+                    'file_path': file_path,
+                    "valid_len": valid_len,
+                }
+            
+            # 5. resample到目标采样率
+            try:
+                if sr != self.sampling_rate:
+                    waveform = torchaudio.functional.resample(waveform, sr, self.sampling_rate)
+            except Exception as e:
+                print(f"Error resampling audio for {file_path}: {e}. Using zero tensor.")
+                waveform = torch.zeros((1, self.segment_size), dtype=torch.float32)
+                valid_len = self.segment_size / self.sampling_rate
+                return {
+                    "waveform": waveform,
+                    'file_path': file_path,
+                    "valid_len": valid_len,
+                }
+            
+            # 6. 如果音频长度不足，进行padding
+            try:
+                current_samples = waveform.shape[1]
+                if current_samples < self.segment_size:
+                    if self.padding_mode == 'repeat':
+                        n_repeats = (self.segment_size + current_samples - 1) // current_samples
+                        waveform = waveform.repeat(1, n_repeats)
+                        waveform = waveform[:, :self.segment_size]
+                    elif self.padding_mode == 'zero':
+                        waveform = torch.nn.functional.pad(
+                            waveform, (0, self.segment_size - current_samples), 
+                            mode='constant', value=0
+                        )
+                elif current_samples > self.segment_size:
+                    # 由于resample可能导致轻微的长度变化，进行微调
+                    waveform = waveform[:, :self.segment_size]
+            except Exception as e:
+                print(f"Error padding audio for {file_path}: {e}. Using zero tensor.")
+                waveform = torch.zeros((1, self.segment_size), dtype=torch.float32)
+                valid_len = self.segment_size / self.sampling_rate
+                return {
+                    "waveform": waveform,
+                    'file_path': file_path,
+                    "valid_len": valid_len,
+                }
+            
+            # 计算有效长度
+            try:
+                if self.padding_mode == 'zero':
+                    # 原始音频长度（秒）和segment_size长度（秒）的最小值
+                    original_duration = n_frames / sr
+                    segment_duration = self.segment_size / self.sampling_rate
+                    valid_len = min(original_duration, segment_duration)
+                else:
+                    valid_len = self.segment_size / self.sampling_rate
+            except Exception as e:
+                print(f"Error calculating valid length for {file_path}: {e}")
+                valid_len = self.segment_size / self.sampling_rate
+            
+            # 7. 归一化音频
+            try:
+                max_val = waveform.abs().max()
+                if max_val > 1e-3:
+                    waveform *= 0.5 / max_val
+            except Exception as e:
+                print(f"Error normalizing audio for {file_path}: {e}")
+                # 如果归一化失败，继续使用未归一化的waveform
+
             return {
                 "waveform": waveform,
-
                 'file_path': file_path,
-                "caption": caption,
                 "valid_len": valid_len,
-                # 'vae_latent': vae_latent,
-                # "t5_emb": t5_emb,
-                # "context_mask": context_mask
-                # 'clip_fea': clip_fea
             }
         except Exception as e:
             print(f"Warning: Failed to load file at index {idx} ({self.metadata[idx]}). Error: {e}. Grabbing a random new sample.")
             new_idx = random.randint(0, len(self) - 1)
             return self.__getitem__(new_idx)
-    
-    
-    def pad_waveform(self, waveform, target_length):
-        """Pad the waveform to a fixed length."""
-        n_samples = waveform.shape[1]
-        if n_samples < target_length:
-            if self.padding_mode == 'repeat':
-                n_repeats = (target_length + n_samples - 1) // n_samples
-                waveform = waveform.repeat(1, n_repeats)
-                waveform = waveform[:, :target_length]
-            elif self.padding_mode == 'zero':
-                waveform = torch.nn.functional.pad(waveform, (0, target_length - n_samples), mode='constant', value=0)
-        elif n_samples > target_length:
-            # start = random.randint(0, n_samples - target_length) if not self.valid else 0
-            if self.chunk_mode == 'constant' or self.valid:
-                start = 0
-            elif self.chunk_mode == 'random':
-                start = random.randint(0, n_samples - target_length)
-            waveform = waveform[:, start:start + target_length]
-        return waveform
 
 
 
@@ -122,11 +250,12 @@ class SemanticCollator:
         self.max_length = max_length
 
     def __call__(self, batch):
-        waveforms, captions, file_paths, valid_len = [], [], [], []
+        # waveforms, captions, file_paths, valid_len = [], [], [], []
+        waveforms, file_paths, valid_len = [], [], []
         for item in batch:
             waveforms.append(item['waveform'])
             valid_len.append(item['valid_len'])
-            captions.append(item['caption'])
+            # captions.append(item['caption'])
             file_paths.append(item['file_path'])
 
         # stack waveforms
@@ -136,30 +265,31 @@ class SemanticCollator:
 
         # tokenizer 编码 captions
         if self.tokenizer is not None:
-            enc = self.tokenizer(
-                [c + self.tokenizer.eos_token for c in captions],
-                padding=True if self.max_length is None else "max_length",
-                truncation=True,
-                max_length=self.max_length,
-                return_tensors="pt"
-            )
+            # enc = self.tokenizer(
+            #     [c + self.tokenizer.eos_token for c in captions],
+            #     padding=True if self.max_length is None else "max_length",
+            #     truncation=True,
+            #     max_length=self.max_length,
+            #     return_tensors="pt"
+            # )
 
-            input_ids = enc['input_ids']
-            attention_mask = enc['attention_mask']
+            # input_ids = enc['input_ids']
+            # attention_mask = enc['attention_mask']
 
             # 构造 labels
-            labels = input_ids.clone()
-            pad_mask = labels == self.tokenizer.pad_token_id
+            # labels = input_ids.clone()
+            # pad_mask = labels == self.tokenizer.pad_token_id
 
-            # 找到每条序列第一个 eos
-            eos_id = self.tokenizer.eos_token_id
-            first_eos_idx = (labels == eos_id).int().cumsum(dim=1) == 1  # 第一个 eos 的位置
+            # # 找到每条序列第一个 eos
+            # eos_id = self.tokenizer.eos_token_id
+            # first_eos_idx = (labels == eos_id).int().cumsum(dim=1) == 1  # 第一个 eos 的位置
 
-            # pad_mask 去掉第一个 eos
-            final_mask = pad_mask & (~first_eos_idx)
+            # # pad_mask 去掉第一个 eos
+            # final_mask = pad_mask & (~first_eos_idx)
 
-            # 只对 final_mask 的位置置 -100
-            labels[final_mask] = -100
+            # # 只对 final_mask 的位置置 -100
+            # labels[final_mask] = -100
+            input_ids = attention_mask = labels = None
         else:
             input_ids = attention_mask = labels = None
 
@@ -169,7 +299,7 @@ class SemanticCollator:
             'input_ids': input_ids,
             'attention_mask': attention_mask,
             'labels': labels,
-            'texts': captions,
+            # 'texts': captions,
             'file_path': file_paths
         }
 

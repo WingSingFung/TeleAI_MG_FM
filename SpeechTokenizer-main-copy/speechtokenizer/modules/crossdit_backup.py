@@ -544,9 +544,91 @@ class DiTEncoder(nn.Module):
     #     x = decode_fn(code) if decode_fn is not None else code
     #     return x
 
+class DiTDecoder(nn.Module):
+    def __init__(
+        self,
+        dim,
+        dim_inner,
+        latent_dim,
+        cond_dim,
+        *,
+        depth,
+        dim_head = 64,
+        heads = 8,
+        attn_dropout = 0.,
+        ff_dropout = 0.,
+        final_dropout = 0.,
+        model_type = '50hz'
+    ):
+        super().__init__()
+        self.dim = dim
+        self.latent_dim = latent_dim
+        self.layers = nn.ModuleList([])
+
+        for _ in range(depth):
+            self.layers.append(DiTBlock(
+                dim=dim,
+                dim_inner=dim_inner,
+                dim_head=dim_head,
+                heads=heads,
+                attn_dropout=attn_dropout,
+                ff_dropout=ff_dropout,
+                t_cond=True,
+                ca=False,
+            ))
+        self.rope = RoPE(head_dim=dim_head)
+        self.t_embedder = TimestepEmbedder(dim, scale=100.)
+
+        if model_type == '50hz': # 25hz seq processing
+            adapter_stride_1 = 1
+            adapter_stride_2 = 2
+        elif model_type == '25hz': # 25hz seq processing
+            adapter_stride_1 = 1
+            adapter_stride_2 = 1
+        elif model_type == '12.5hz': # 12.5hz seq processing
+            adapter_stride_1 = 2
+            adapter_stride_2 = 1
+        self.input_adapter = nn.Sequential(
+            nn.Conv1d(latent_dim, dim, kernel_size=3, padding=1),
+            Swish(),
+            nn.Conv1d(dim, dim, kernel_size=3, stride=adapter_stride_1, padding=1),
+            Rearrange('b d n -> b n d')
+        )
+        self.cond_adapter = nn.Sequential(
+            Rearrange('b n d -> b d n'),
+            nn.Conv1d(cond_dim, dim, kernel_size=3, padding=1),
+            Swish(),
+            nn.Conv1d(dim, dim, kernel_size=3, stride=adapter_stride_2, padding=1),
+            Rearrange('b d n -> b n d')
+        )
+        self.final_layer = FinalLayer(dim, latent_dim, final_dropout)
+
+    def forward(self, x_t, t, cond):
+        '''
+        x: (b, n, latent_dim)
+        t: (b,)
+        cond: (b, cond_dim, n)
+        '''
+        B, D, T = x_t.shape
+        if t.dim() == 0:
+            t = t.repeat(B)
+        t_emb = self.t_embedder(t)
+        x_t = self.input_adapter(x_t)
+        x_t += self.cond_adapter(cond)
+
+        for block in self.layers:
+            x_t = block(x_t, t=t_emb, rope=self.rope)
+        
+        v = self.final_layer(x_t, t_emb)
+
+        v = rearrange(v, 'b n d -> b d n')
+
+        return v
 
 if __name__ == '__main__':
     model = DiTEncoder(dim=1024, dim_inner=3072, mel_dim=128, depth=3, dim_head=64, heads=16)
     data = torch.randn((8, 128, 100))
     out = model(data)
     print(out.shape)
+
+
