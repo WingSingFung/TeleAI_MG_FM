@@ -94,7 +94,7 @@
     "segment_size": 320000,
     "wd": 1e-2,
     "eps": 1e-6,
-    "num_workers": 8,
+    "num_workers": 40,
     "num_ckpt_keep": 3,
     "showpiece_num": 8,
     "accelerator": "gpu",

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="f186e8d9-6d3d-45d2-a852-b46b44a692bc" name="h100">
+        <fileTransfer rootFolder="/gemini/platform/public/aigc/fys/separation/TeleAI_MG_FM" accessType="SFTP" host="10.103.100.2" port="30022" sshConfigId="ea0fd7d6-0f37-4909-b49c-cfb1699da77c" sshConfig="h100-1">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" keepAliveTimeout="0" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

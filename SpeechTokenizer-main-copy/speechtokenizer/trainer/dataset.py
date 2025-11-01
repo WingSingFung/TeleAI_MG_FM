@@ -55,15 +55,30 @@ class audioDataset(Dataset):
                 n_frames = audio_info.num_frames
                 n_channels = audio_info.num_channels
             except Exception as e:
-                print(f"Error reading audio info from {file_path}: {e}")
-                raise RuntimeError(f"Failed to read audio info: {e}")
+                print(f"Error reading audio info from {file_path}: {e}. Returning zero tensor.")
+                # 音频信息读取失败，直接返回全0 tensor
+                waveform = torch.zeros((1, self.segment_size), dtype=torch.float32)
+                valid_len = self.segment_size / self.sampling_rate
+                return {
+                    "waveform": waveform,
+                    'file_path': file_path,
+                    "valid_len": valid_len,
+                }
             
             # 检查音频是否为空
             if n_frames == 0:
-                raise RuntimeError("Audio file is empty.")
+                print(f"Warning: Audio file is empty: {file_path}. Returning zero tensor.")
+                # 音频为空，直接返回全0 tensor
+                waveform = torch.zeros((1, self.segment_size), dtype=torch.float32)
+                valid_len = self.segment_size / self.sampling_rate
+                return {
+                    "waveform": waveform,
+                    'file_path': file_path,
+                    "valid_len": valid_len,
+                }
             
             # 尝试选择非静音片段，最多重试10次
-            max_retries = 10
+            max_retries = 3
             waveform = None
             successfully_loaded = False
             
@@ -112,7 +127,13 @@ class audioDataset(Dataset):
                     
                     # 检查加载的音频是否为空
                     if waveform.numel() == 0:
-                        raise RuntimeError("Loaded audio segment is empty.")
+                        print(f"Warning: Loaded audio segment is empty for {file_path}. Retry {retry + 1} of {max_retries}.")
+                        if retry < max_retries - 1:
+                            continue  # 继续重试
+                        else:
+                            # 最后一次重试仍为空，标记失败
+                            waveform = None
+                            break
                     
                     # 3. 先检查是否为静音（在进行其他处理之前）
                     # 注意：这里检查的是多通道或原始采样率的音频
@@ -231,9 +252,16 @@ class audioDataset(Dataset):
                 "valid_len": valid_len,
             }
         except Exception as e:
-            print(f"Warning: Failed to load file at index {idx} ({self.metadata[idx]}). Error: {e}. Grabbing a random new sample.")
-            new_idx = random.randint(0, len(self) - 1)
-            return self.__getitem__(new_idx)
+            print(f"Warning: Failed to load file at index {idx} ({self.metadata[idx]}). Error: {e}. Returning zero tensor.")
+            # 任何未预期的异常，直接返回全0 tensor
+            file_path = self.metadata[idx].get('wav_path', 'unknown')
+            waveform = torch.zeros((1, self.segment_size), dtype=torch.float32)
+            valid_len = self.segment_size / self.sampling_rate
+            return {
+                "waveform": waveform,
+                'file_path': file_path,
+                "valid_len": valid_len,
+            }
 
 
 

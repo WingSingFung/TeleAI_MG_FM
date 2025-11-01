@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="SshConfigs">
+    <configs>
+      <sshConfig authType="PASSWORD" host="10.103.100.2" id="7c9a1788-1ae6-4c14-9ec7-64553ae64f23" port="30022" customName="h100-2" nameFormat="CUSTOM" username="wingsing@root@ssh-1219.default" useOpenSSHConfig="true">
+        <option name="customName" value="h100-2" />
+      </sshConfig>
+      <sshConfig authType="PASSWORD" host="10.103.100.2" id="ea0fd7d6-0f37-4909-b49c-cfb1699da77c" port="30022" customName="h100-1" nameFormat="CUSTOM" username="wingsing@root@ssh-1297.default" useOpenSSHConfig="true">
+        <option name="customName" value="h100-1" />
+      </sshConfig>
+    </configs>
+  </component>
+</project>
